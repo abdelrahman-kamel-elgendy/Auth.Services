@@ -8,10 +8,11 @@ JWT access tokens, and refresh-token rotation. It uses ASP.NET Core Identity and
 Entity Framework Core with SQL Server.
 
 > **Project status:** This repository contains an application foundation, not a
-> production-ready identity platform. The current source has no EF Core
-> migrations, automated test projects, CI/CD pipeline, container or Kubernetes
-> deployment files, health checks, or license. Important security and operational
-> limitations are called out below. Review and address them before production use.
+> production-ready identity platform. It now includes an initial EF Core
+> migration, but has no automated test projects, CI/CD pipeline, container or
+> Kubernetes deployment files, health checks, or license. Important security
+> and operational limitations are called out below. Review and address them
+> before production use.
 
 ## Contents
 
@@ -159,7 +160,7 @@ sequenceDiagram
 
     Client->>API: POST /api/auth/refresh-token
     API->>JWT: Validate signature of supplied access token
-    API->>DB: Find active refresh token; revoke it and save replacement
+    API->>DB: Find active refresh token, revoke it, and save replacement
     API-->>Client: 200 replacement token pair
 ```
 
@@ -252,6 +253,10 @@ Package versions are declared in the three project files. The projects target
 └── AuthService.Infrastructure/
     ├── AuthService.Infrastructure.csproj
     ├── Data/
+    │   ├── Migrations/
+    │   │   ├── 20261020112409_InitialCreate.cs
+    │   │   ├── 20261020112409_InitialCreate.Designer.cs
+    │   │   └── ApplicationDbContextModelSnapshot.cs
     │   └── ApplicationDbContext.cs
     └── Services/
         └── JwtService.cs
@@ -275,9 +280,8 @@ Package versions are declared in the three project files. The projects target
   application entities to database tables.
 - `AuthService.Infrastructure/Services/JwtService.cs` creates JWTs and random
   refresh-token values.
-- `.gitignore` excludes build output, local settings, logs, databases, and
-  directories named `Migrations`. Review the migration ignore rule before
-  generating migrations so schema source files are committed.
+- `.gitignore` excludes build output, local settings, logs, and database files;
+  EF Core migration source is kept in version control.
 
 The `bin/`, `obj/`, and runtime `logs/` directories may appear locally but are
 generated artifacts and are not part of the source layout.
@@ -322,32 +326,23 @@ Do not use the checked-in example signing key outside local-only development.
 
 ### 3. Create and apply the database schema
 
-**This repository currently has no EF Core migration files.** `Program.cs` calls
-`MigrateAsync()` during startup, but that call cannot create the application's
-tables without migrations. The startup code catches and logs migration errors,
-then continues starting the web server; a successful HTTP startup therefore
-does not prove the database is ready.
+The initial migration, `20261020112409_InitialCreate`, creates the Identity and
+application tables. `Program.cs` calls `MigrateAsync()` during startup and then
+seeds the `Admin`, `User`, and `Manager` roles. The startup code catches and
+logs migration errors, then continues starting the web server; a successful
+HTTP startup therefore does not prove the database is ready.
 
-To author an initial migration after installing the EF CLI:
-
-```powershell
-dotnet tool install --global dotnet-ef --version 8.0.0
-dotnet ef migrations add InitialCreate `
-  --project .\AuthService.Infrastructure\AuthService.Infrastructure.csproj `
-  --startup-project .\AuthService.API\AuthService.API.csproj `
-  --output-dir Data\Migrations
-```
-
-Then inspect and commit the generated migration and model snapshot. The
-repository's `.gitignore` currently ignores directories named `Migrations`;
-adjust that rule or force-add the reviewed migration files. Start the API with
-a valid database connection to apply migrations automatically, or use:
+To apply it to another configured database:
 
 ```powershell
 dotnet ef database update `
   --project .\AuthService.Infrastructure\AuthService.Infrastructure.csproj `
   --startup-project .\AuthService.API\AuthService.API.csproj
 ```
+
+To create a later schema migration, use the same project/startup-project
+arguments with `dotnet ef migrations add <MigrationName> --output-dir
+Data\Migrations`. Review and commit the migration and model snapshot.
 
 For production, prefer reviewed migration scripts or a controlled deployment
 step instead of applying schema changes implicitly during application startup.
@@ -686,15 +681,14 @@ keys, and maps Identity tables to these explicit names:
 
 ### Migrations and initialization
 
-No migration is currently checked in. Startup invokes `MigrateAsync()` and then
+The initial migration is checked in. Startup invokes `MigrateAsync()` and then
 seeds the `Admin`, `User`, and `Manager` roles. If migration/role setup fails,
 the exception is logged and swallowed, and the server continues to run. This
 can leave an apparently available API with an unusable database. Monitor startup
 logs and add a readiness check before deploying.
 
 See [Create and apply the database schema](#3-create-and-apply-the-database-schema)
-for initial migration commands. The `.gitignore` migration rule must be
-reviewed so migration source is not accidentally omitted from source control.
+for database update commands.
 
 ### Backup and recovery
 
@@ -968,10 +962,10 @@ artifacts. A formal license and contribution policy require maintainer approval.
 
 ### The API starts, but registration/login returns errors or the logs show `Invalid object name 'Roles'`.
 
-The schema likely does not exist. This repository has no checked-in EF Core
-migrations. Add and apply a reviewed initial migration and verify the configured
-SQL Server connection. Startup currently logs migration errors and continues,
-so a listening HTTP port alone is not a database health check.
+The schema may not exist in the configured database. Verify the SQL Server
+connection and apply the checked-in migration with `dotnet ef database update`.
+Startup currently logs migration errors and continues, so a listening HTTP
+port alone is not a database health check.
 
 ### `dotnet ef` cannot find a migration or DbContext.
 
