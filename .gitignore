@@ -28,8 +28,13 @@ appsettings.*.json
 logs/
 *.log
 
-## .env files
+## Environment files (commit templates only)
 .env
+.env.*
+!.env.example
+!.env.development.example
+!.env.staging.example
+!.env.production.example
 
 ## docker
 .env.docker

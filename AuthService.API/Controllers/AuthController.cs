@@ -6,6 +6,7 @@ using AuthService.Core.Entities;
 using AuthService.Core.DTOs;
 using AuthService.Core.Interfaces;
 using AuthService.Infrastructure.Data;
+using AuthService.Infrastructure.Configuration;
 
 namespace AuthService.API.Controllers
 {
@@ -19,6 +20,7 @@ namespace AuthService.API.Controllers
         private readonly IJwtService _jwtService;
         private readonly ILogger<AuthController> _logger;
         private readonly ApplicationDbContext _context;
+        private readonly AuthServiceSettings _settings;
 
         public AuthController(
             UserManager<ApplicationUser> userManager,
@@ -26,7 +28,8 @@ namespace AuthService.API.Controllers
             RoleManager<ApplicationRole> roleManager,
             IJwtService jwtService,
             ILogger<AuthController> logger,
-            ApplicationDbContext context)
+            ApplicationDbContext context,
+            AuthServiceSettings settings)
         {
             _userManager = userManager;
             _signInManager = signInManager;
@@ -34,11 +37,17 @@ namespace AuthService.API.Controllers
             _jwtService = jwtService;
             _logger = logger;
             _context = context;
+            _settings = settings;
         }
 
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterRequest request)
         {
+            if (!_settings.RegistrationEnabled)
+            {
+                return NotFound();
+            }
+
             try
             {
                 _logger.LogInformation("Registration attempt for email: {Email}", request.Email);
@@ -106,7 +115,7 @@ namespace AuthService.API.Controllers
                     TokenId = Guid.NewGuid(),
                     UserId = user.Id,
                     Token = refreshToken,
-                    TokenExpiryDate = DateTime.UtcNow.AddDays(7),
+                    TokenExpiryDate = DateTime.UtcNow.AddDays(_settings.RefreshTokenExpirationDays),
                     CreatedAt = DateTime.UtcNow,
                     CreatedByIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"
                 };
@@ -125,7 +134,7 @@ namespace AuthService.API.Controllers
                     Email = user.Email ?? string.Empty,
                     AccessToken = accessToken,
                     RefreshToken = refreshToken,
-                    ExpiresAt = DateTime.UtcNow.AddMinutes(15),
+                    ExpiresAt = DateTime.UtcNow.AddMinutes(_settings.AccessTokenExpirationMinutes),
                     Roles = roles.ToList()
                 });
             }
@@ -170,7 +179,7 @@ namespace AuthService.API.Controllers
                     TokenId = Guid.NewGuid(),
                     UserId = user.Id,
                     Token = newRefreshToken,
-                    TokenExpiryDate = DateTime.UtcNow.AddDays(7),
+                    TokenExpiryDate = DateTime.UtcNow.AddDays(_settings.RefreshTokenExpirationDays),
                     CreatedAt = DateTime.UtcNow,
                     CreatedByIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
                     ReplacedByTokenId = storedRefreshToken.TokenId

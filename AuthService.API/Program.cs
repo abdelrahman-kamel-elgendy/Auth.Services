@@ -10,16 +10,34 @@ using AuthService.Infrastructure.Data;
 using AuthService.Infrastructure.Services;
 using AuthService.Core.Interfaces;
 using AuthService.API.Middleware;
+using AuthService.Infrastructure.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
+var settings = AuthServiceSettings.Load(builder.Configuration);
 
 // Configure Serilog
-Log.Logger = new LoggerConfiguration()
+var loggerConfiguration = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .Enrich.FromLogContext()
-    .WriteTo.Console()
-    .WriteTo.File("logs/auth-service-.txt", rollingInterval: RollingInterval.Day)
-    .CreateLogger();
+    .WriteTo.Console();
+
+var logFilePath = builder.Configuration["Logging:FilePath"];
+if (!string.IsNullOrWhiteSpace(logFilePath))
+{
+    var rollingIntervalValue = builder.Configuration["Logging:FileRollingInterval"];
+    var rollingInterval = RollingInterval.Day;
+    if (!string.IsNullOrWhiteSpace(rollingIntervalValue) &&
+        (!Enum.TryParse(rollingIntervalValue, ignoreCase: true, out rollingInterval) ||
+         !Enum.IsDefined(typeof(RollingInterval), rollingInterval)))
+    {
+        throw new InvalidOperationException(
+            "Configuration 'Logging:FileRollingInterval' must be a valid Serilog rolling interval.");
+    }
+
+    loggerConfiguration.WriteTo.File(logFilePath, rollingInterval: rollingInterval);
+}
+
+Log.Logger = loggerConfiguration.CreateLogger();
 
 builder.Host.UseSerilog();
 
@@ -58,25 +76,24 @@ builder.Services.AddSwaggerGen(c =>
 
 // Configure Database
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseSqlServer(settings.ConnectionString));
 
 // Configure Identity
 builder.Services.AddIdentity<ApplicationUser, ApplicationRole>(options =>
 {
-    options.Password.RequireDigit = true;
-    options.Password.RequiredLength = 6;
-    options.Password.RequireNonAlphanumeric = false;
-    options.Password.RequireUppercase = true;
-    options.Password.RequireLowercase = true;
-    options.User.RequireUniqueEmail = true;
-    options.SignIn.RequireConfirmedEmail = false;
+    options.Password.RequireDigit = settings.PasswordRequireDigit;
+    options.Password.RequiredLength = settings.PasswordRequiredLength;
+    options.Password.RequireNonAlphanumeric = settings.PasswordRequireNonAlphanumeric;
+    options.Password.RequireUppercase = settings.PasswordRequireUppercase;
+    options.Password.RequireLowercase = settings.PasswordRequireLowercase;
+    options.User.RequireUniqueEmail = settings.RequireUniqueEmail;
+    options.SignIn.RequireConfirmedEmail = settings.RequireConfirmedEmail;
 })
 .AddEntityFrameworkStores<ApplicationDbContext>()
 .AddDefaultTokenProviders();
 
 // Configure JWT Authentication
-var jwtSecret = builder.Configuration["Jwt:SecretKey"]
-    ?? throw new InvalidOperationException("JWT Secret Key not configured.");
+builder.Services.AddSingleton(settings);
 
 builder.Services.AddAuthentication(options =>
 {
@@ -91,9 +108,9 @@ builder.Services.AddAuthentication(options =>
         ValidateAudience = true,
         ValidateLifetime = true,
         ValidateIssuerSigningKey = true,
-        ValidIssuer = builder.Configuration["Jwt:Issuer"],
-        ValidAudience = builder.Configuration["Jwt:Audience"],
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret))
+        ValidIssuer = settings.JwtIssuer,
+        ValidAudience = settings.JwtAudience,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(settings.JwtSecretKey))
     };
 });
 

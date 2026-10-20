@@ -24,6 +24,7 @@ Entity Framework Core with SQL Server.
 - [Requirements](#requirements)
 - [Installation and first run](#installation-and-first-run)
 - [Configuration and environment variables](#configuration-and-environment-variables)
+- [Environment configuration reference](docs/environment-variables.md)
 - [Local development](#local-development)
 - [API reference](#api-reference)
 - [Database](#database)
@@ -210,9 +211,17 @@ Package versions are declared in the three project files. The projects target
 
 ```text
 .
+├── .env.example
+├── .env.development.example
+├── .env.staging.example
+├── .env.production.example
 ├── .gitignore
 ├── README.md
 ├── AuthService.slnx
+├── docs/
+│   └── environment-variables.md
+├── scripts/
+│   └── Import-Env.ps1
 ├── AuthService.API/
 │   ├── AuthService.API.csproj
 │   ├── Program.cs
@@ -252,6 +261,8 @@ Package versions are declared in the three project files. The projects target
 │       └── DateValidator.cs
 └── AuthService.Infrastructure/
     ├── AuthService.Infrastructure.csproj
+    ├── Configuration/
+    │   └── AuthServiceSettings.cs
     ├── Data/
     │   ├── Migrations/
     │   │   ├── 20261020112409_InitialCreate.cs
@@ -269,10 +280,11 @@ Package versions are declared in the three project files. The projects target
   Core migrations at startup, and seeds the default roles.
 - `AuthService.API/Controllers/AuthController.cs` implements the five current
   authentication routes.
-- `AuthService.API/appsettings.json` contains the default connection string,
-  JWT settings, rate-limit rules, and Serilog levels.
-- `AuthService.API/Properties/launchSettings.json` defines local HTTP/HTTPS
-  launch profiles and ports.
+- `AuthService.API/appsettings.json` and `appsettings.Development.json` are
+  intentionally empty; runtime configuration comes from environment variables
+  and development user secrets.
+- `AuthService.API/Properties/launchSettings.json` defines Development launch
+  profiles. Bind addresses and ports come from `ASPNETCORE_URLS`.
 - `AuthService.API/AuthService.API.http` is an editor HTTP request file. Its
   current sample still refers to `/weatherforecast`, which is not an
   implemented endpoint.
@@ -280,6 +292,12 @@ Package versions are declared in the three project files. The projects target
   application entities to database tables.
 - `AuthService.Infrastructure/Services/JwtService.cs` creates JWTs and random
   refresh-token values.
+- `AuthService.Infrastructure/Configuration/AuthServiceSettings.cs` validates
+  required runtime settings before the application starts.
+- `docs/environment-variables.md` documents supported settings, unused generic
+  template names, secret handling, and environment separation.
+- `scripts/Import-Env.ps1` imports a simple dotenv file into the current
+  PowerShell process for local development.
 - `.gitignore` excludes build output, local settings, logs, and database files;
   EF Core migration source is kept in version control.
 
@@ -320,9 +338,23 @@ dotnet build .\AuthService.slnx
 
 ### 2. Configure secrets and database access
 
-Set the connection string and a unique JWT signing secret. See
-[Configuration and environment variables](#configuration-and-environment-variables).
-Do not use the checked-in example signing key outside local-only development.
+Copy the development template and create a local-only signing secret:
+
+```powershell
+Copy-Item .env.development.example .env.development
+dotnet user-secrets init --project .\AuthService.API\AuthService.API.csproj
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$keyBytes = New-Object byte[] 32
+$rng.GetBytes($keyBytes)
+$jwtSecret = [Convert]::ToBase64String($keyBytes)
+$rng.Dispose()
+dotnet user-secrets set "Jwt:SecretKey" `
+  $jwtSecret `
+  --project .\AuthService.API\AuthService.API.csproj
+```
+
+See [Environment and Configuration Strategy](docs/environment-variables.md)
+for all settings and secure staging/production configuration guidance.
 
 ### 3. Create and apply the database schema
 
@@ -350,12 +382,14 @@ step instead of applying schema changes implicitly during application startup.
 ### 4. Run the API
 
 ```powershell
-dotnet run --project .\AuthService.API\AuthService.API.csproj --launch-profile http
+.\scripts\Import-Env.ps1 .env.development
+dotnet run --project .\AuthService.API\AuthService.API.csproj --no-launch-profile
 ```
 
-The `http` profile listens on `http://localhost:5170`. The `https` profile
-listens on `https://localhost:7282` and `http://localhost:5170`. In Development,
-open [http://localhost:5170/swagger](http://localhost:5170/swagger).
+The development template binds to `http://localhost:5170`. ASP.NET Core does
+not load `.env` files automatically; import the template or set environment
+variables directly. In Development, open
+[http://localhost:5170/swagger](http://localhost:5170/swagger).
 
 ### 5. Verify startup
 
@@ -380,45 +414,32 @@ flowchart TD
 
 ## Configuration and environment variables
 
-ASP.NET Core loads `appsettings.json`, the environment-specific appsettings
-file, and environment variables. Use double underscores (`__`) to represent
-configuration nesting in environment-variable names. Environment variables
-override JSON values.
+ASP.NET Core reads process environment variables and uses double underscores
+(`__`) to represent nested configuration. A dotenv file is not read
+automatically. The complete list of supported variables, types, examples,
+security levels, unused generic template values, and recommendations is in
+[docs/environment-variables.md](docs/environment-variables.md).
 
-| Setting / environment variable | Required | Default / example | Purpose and security notes |
-| --- | --- | --- | --- |
-| `ConnectionStrings__DefaultConnection` | Yes for database features | LocalDB connection in `appsettings.json` | SQL Server connection string. Treat credentials as secrets. Use a least-privilege database identity in hosted environments. |
-| `Jwt__SecretKey` | Yes | Checked-in development placeholder; replace it | HMAC signing key. Supply a unique cryptographically random secret of at least 32 bytes. Store it in a secret manager; never commit a production key. Changing it invalidates previously issued access tokens. |
-| `Jwt__Issuer` | Yes for a well-defined token issuer | `AuthService` | Expected JWT issuer. Keep issuance and validation settings consistent. |
-| `Jwt__Audience` | Yes for a well-defined token audience | `AuthServiceClient` | Expected JWT audience. Configure only the intended consumers. |
-| `Jwt__AccessTokenExpirationMinutes` | No | `15` | Access-token lifetime read by `JwtService`. The login response currently reports a hard-coded 15 minutes, so keep this setting at 15 unless that response behavior is corrected. |
-| `ASPNETCORE_ENVIRONMENT` | No | Launch profiles set `Development` | Controls environment-specific configuration and Swagger availability. Use `Production` in production; avoid exposing development exception details. |
-| `IpRateLimiting__...` | No | See rate-limit section in `appsettings.json` | AspNetCoreRateLimit settings; nested arrays can be overridden using indexed environment keys. Prefer managing complex rule sets in protected deployment configuration. |
-| `Serilog__MinimumLevel__Default` | No | `Information` | Default minimum log level. Avoid raising verbosity where sensitive request data could be exposed. |
-| `Serilog__MinimumLevel__Override__Microsoft` | No | `Warning` | Microsoft framework log level override. |
-| `Serilog__MinimumLevel__Override__System` | No | `Warning` | System log level override. |
-| `AllowedHosts` | No | `*` | ASP.NET Core host filtering. Restrict to expected hostnames in deployment. |
-
-For PowerShell local development:
+Load the local example in PowerShell:
 
 ```powershell
-$env:ConnectionStrings__DefaultConnection = "Server=localhost;Database=AuthServiceDb;Trusted_Connection=True;TrustServerCertificate=True"
-$env:Jwt__SecretKey = "<replace-with-a-unique-random-secret-of-at-least-32-bytes>"
-$env:Jwt__Issuer = "AuthService"
-$env:Jwt__Audience = "AuthServiceClient"
-$env:ASPNETCORE_ENVIRONMENT = "Development"
-dotnet run --project .\AuthService.API\AuthService.API.csproj
+Copy-Item .env.development.example .env.development
+.\scripts\Import-Env.ps1 .env.development
+$rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$keyBytes = New-Object byte[] 32
+$rng.GetBytes($keyBytes)
+$env:Jwt__SecretKey = [Convert]::ToBase64String($keyBytes)
+$rng.Dispose()
+dotnet run --project .\AuthService.API\AuthService.API.csproj --no-launch-profile
 ```
 
-Environment variable values set this way apply only to the current PowerShell
-process and its child processes. Production secrets should come from the
-deployment platform's secret store, not from a checked-in file or command
-history.
+Use .NET User Secrets for local-only secret storage where practical. Staging
+and production secrets must come from the hosting platform's secret manager.
 
 ### Rate-limit configuration
 
-The current JSON config enables endpoint rate limiting, returns HTTP `429` when
-limited, and defines:
+The environment examples enable endpoint rate limiting, return HTTP `429` when
+limited, and define:
 
 | Rule | Limit |
 | --- | --- |
@@ -430,9 +451,9 @@ are not coordinated across multiple replicas.
 
 ### Feature flags and runtime settings
 
-No feature-flag system is present. The application configures JWT parameters,
-Identity password/user settings, rate limits, logging, forwarded headers, and
-development Swagger directly in `Program.cs` and JSON settings.
+One environment-controlled feature flag is implemented:
+`Features__RegistrationEnabled`. Setting it to `false` makes registration
+return `404`. There is no general-purpose feature-flag system.
 
 ## Local development
 
@@ -440,8 +461,8 @@ development Swagger directly in `Program.cs` and JSON settings.
 
 1. Create or select a SQL Server database and configure the connection string.
 2. Ensure a tracked EF migration exists and apply it.
-3. Set the Development environment and a local JWT secret.
-4. Run `dotnet watch --project .\AuthService.API\AuthService.API.csproj`.
+3. Import `.env.development.example` and configure a local JWT secret.
+4. Run `dotnet watch --no-launch-profile --project .\AuthService.API\AuthService.API.csproj`.
 5. Use Swagger UI or an HTTP client to exercise `/api/auth` routes.
 6. Run `dotnet build .\AuthService.slnx` after changes.
 
@@ -453,17 +474,19 @@ custom watch configuration is included.
 - Set `ASPNETCORE_ENVIRONMENT=Development` for the Development launch profile.
 - Use the debugger's ASP.NET Core launch configuration to attach to
   `AuthService.API`.
-- Inspect console output and rolling files under `AuthService.API/logs/`.
+- Inspect console output and, when `Logging__FilePath` is set, rolling files
+  under the configured log path (the development template writes to
+  `AuthService.API/logs/auth-service-*.log`).
 - Check the SQL Server connection and migration state separately from the HTTP
   process; startup currently logs migration exceptions and continues.
 - Swagger is registered only in Development.
 
 ### Configuration precedence
 
-Environment variables override appsettings values. User Secrets are not wired
-explicitly by the project, but can be enabled through standard ASP.NET Core
-development hosting if desired. Do not use committed JSON settings for
-credentials.
+ASP.NET Core's default Development configuration loads User Secrets for the API
+project, and process environment variables override them. `.env` files require
+the included PowerShell importer. Do not store credentials in committed JSON
+settings.
 
 ## API reference
 
@@ -556,8 +579,8 @@ Success returns HTTP 200 with this shape:
 }
 ```
 
-The expiry timestamp is generated as UTC now plus 15 minutes in the controller,
-independent of `Jwt:AccessTokenExpirationMinutes`.
+The expiry timestamp and JWT lifetime both use
+`Jwt:AccessTokenExpirationMinutes`.
 
 ### Refresh
 
@@ -836,11 +859,12 @@ Use SQL Server LocalDB on Windows or a separately managed SQL Server instance.
 Configure settings, ensure migrations exist and are applied, then:
 
 ```powershell
-dotnet run --project .\AuthService.API\AuthService.API.csproj --launch-profile https
+.\scripts\Import-Env.ps1 .env.development
+dotnet run --project .\AuthService.API\AuthService.API.csproj --no-launch-profile
 ```
 
-Development Swagger is served at `https://localhost:7282/swagger` with the
-checked-in launch profile.
+Development Swagger is served at the base URL configured in `ASPNETCORE_URLS`
+plus `/swagger`.
 
 ### Staging and production
 
@@ -1010,15 +1034,14 @@ That route is not implemented. Use the `/api/auth` routes documented above.
 The following items are not implemented or configured today; they are candidates
 for future work, not delivery commitments:
 
-- Add and track the initial EF migration; make startup readiness accurately
-  reflect database availability.
+- Add startup readiness checks that accurately reflect database availability;
+  the initial EF migration is now checked in.
 - Add unit, integration, and security test projects plus CI enforcement.
 - Improve refresh-token handling with hashing at rest, unique indexes,
   transactional rotation, and replay/concurrency tests.
 - Add account lockout, email verification, forgot/reset password workflows,
   and safe role-assignment failure handling.
-- Align reported token expiry with configured token lifetime and standardize
-  error response contracts.
+- Standardize error response contracts across endpoints.
 - Add health checks, metrics, distributed tracing, centralized log export, and
   operational alerts.
 - Add container and cloud deployment assets if those deployment targets are
@@ -1058,13 +1081,13 @@ dotnet restore .\AuthService.slnx
 dotnet build .\AuthService.slnx --no-restore
 
 # Run with hot reload
-dotnet watch --project .\AuthService.API\AuthService.API.csproj
+.\scripts\Import-Env.ps1 .env.development
+dotnet watch --no-launch-profile --project .\AuthService.API\AuthService.API.csproj
 
-# Run using the HTTP or HTTPS launch profile
-dotnet run --project .\AuthService.API\AuthService.API.csproj --launch-profile http
-dotnet run --project .\AuthService.API\AuthService.API.csproj --launch-profile https
+# Run using the bind URLs in the imported environment
+dotnet run --project .\AuthService.API\AuthService.API.csproj --no-launch-profile
 
-# Check the local Swagger endpoint (HTTP profile)
+# Check the local Swagger endpoint (development template)
 Invoke-WebRequest http://localhost:5170/swagger/index.html
 ```
 

@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
@@ -7,17 +6,18 @@ using System.Security.Cryptography;
 using System.Text;
 using AuthService.Core.Entities;
 using AuthService.Core.Interfaces;
+using AuthService.Infrastructure.Configuration;
 
 namespace AuthService.Infrastructure.Services;
 
 public class JwtService : IJwtService
 {
-    private readonly IConfiguration _configuration;
+    private readonly AuthServiceSettings _settings;
     private readonly UserManager<ApplicationUser> _userManager;
 
-    public JwtService(IConfiguration configuration, UserManager<ApplicationUser> userManager)
+    public JwtService(AuthServiceSettings settings, UserManager<ApplicationUser> userManager)
     {
-        _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+        _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _userManager = userManager ?? throw new ArgumentNullException(nameof(userManager));
     }
 
@@ -39,22 +39,14 @@ public class JwtService : IJwtService
         var roles = await _userManager.GetRolesAsync(user);
         claims.AddRange(roles.Select(role => new Claim(ClaimTypes.Role, role)));
 
-        var secretKey = _configuration["Jwt:SecretKey"];
-        if (string.IsNullOrEmpty(secretKey))
-            throw new InvalidOperationException("JWT Secret Key not configured");
-
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey));
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_settings.JwtSecretKey));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
-        var expirationMinutesStr = _configuration["Jwt:AccessTokenExpirationMinutes"];
-        if (!double.TryParse(expirationMinutesStr, out var expirationMinutes))
-            expirationMinutes = 15;
-
         var token = new JwtSecurityToken(
-            issuer: _configuration["Jwt:Issuer"],
-            audience: _configuration["Jwt:Audience"],
+            issuer: _settings.JwtIssuer,
+            audience: _settings.JwtAudience,
             claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(expirationMinutes),
+            expires: DateTime.UtcNow.AddMinutes(_settings.AccessTokenExpirationMinutes),
             signingCredentials: credentials
         );
 
@@ -74,16 +66,12 @@ public class JwtService : IJwtService
         if (string.IsNullOrEmpty(token))
             throw new ArgumentNullException(nameof(token));
 
-        var secretKey = _configuration["Jwt:SecretKey"];
-        if (string.IsNullOrEmpty(secretKey))
-            throw new InvalidOperationException("JWT Secret Key not configured");
-
         var tokenValidationParameters = new TokenValidationParameters
         {
             ValidateAudience = false,
             ValidateIssuer = false,
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey)),
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_settings.JwtSecretKey)),
             ValidateLifetime = false
         };
 
