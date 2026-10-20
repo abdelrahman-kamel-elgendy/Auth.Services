@@ -24,9 +24,6 @@ appsettings.*.json
 *.db3
 *.sqlite
 
-## Migrations
-Migrations
-
 ## Logs
 logs/
 *.log

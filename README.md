@@ -1,534 +1,1099 @@
-<div align="center">
+# Auth Service
 
-# 🔐 AuthCore.API
+![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4)
+![Application type](https://img.shields.io/badge/application-ASP.NET%20Core%20API-512BD4)
 
-[![.NET](https://img.shields.io/badge/.NET-8.0-purple)](https://dotnet.microsoft.com)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14+-336791?logo=postgresql&logoColor=white)](https://www.postgresql.org)
-[![JWT](https://img.shields.io/badge/Auth-JWT-orange)](https://jwt.io)
-[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com)
+An ASP.NET Core Web API starter for account registration, password authentication,
+JWT access tokens, and refresh-token rotation. It uses ASP.NET Core Identity and
+Entity Framework Core with SQL Server.
 
-A production-ready authentication REST API built with **ASP.NET Core 8** and **PostgreSQL**. Handles the full auth lifecycle, registration, email confirmation, login, JWT + refresh token rotation on logout, password management, user profiles, and admin controls.
+> **Project status:** This repository contains an application foundation, not a
+> production-ready identity platform. The current source has no EF Core
+> migrations, automated test projects, CI/CD pipeline, container or Kubernetes
+> deployment files, health checks, or license. Important security and operational
+> limitations are called out below. Review and address them before production use.
 
-</div>
+## Contents
 
----
+- [Overview](#overview)
+- [Screenshots](#screenshots)
+- [Architecture](#architecture)
+- [Technology stack](#technology-stack)
+- [Repository structure](#repository-structure)
+- [Requirements](#requirements)
+- [Installation and first run](#installation-and-first-run)
+- [Configuration and environment variables](#configuration-and-environment-variables)
+- [Local development](#local-development)
+- [API reference](#api-reference)
+- [Database](#database)
+- [Security](#security)
+- [Testing and quality](#testing-and-quality)
+- [CI/CD and releases](#cicd-and-releases)
+- [Deployment and operations](#deployment-and-operations)
+- [Monitoring and observability](#monitoring-and-observability)
+- [Performance and scaling](#performance-and-scaling)
+- [Maintenance](#maintenance)
+- [Contributing](#contributing)
+- [FAQ and troubleshooting](#faq-and-troubleshooting)
+- [Roadmap and current limitations](#roadmap-and-current-limitations)
+- [License](#license)
+- [Support and vulnerability reports](#support-and-vulnerability-reports)
+- [Appendix: useful commands and glossary](#appendix-useful-commands-and-glossary)
 
-## Features
+## Overview
 
-- **JWT Authentication**: access tokens signed with HS256, expire after 1 hour with zero clock skew tolerance; refresh tokens are cryptographically random 64-byte values, rotated on every use and expired after 7 days
-- **Refresh Token Rotation**: every `/refresh-token` call invalidates the old token and issues a new one; reuse of a consumed token is detected and rejected
-- **Email Confirmation**: account login is blocked until the email address is verified; confirmation and welcome emails are sent automatically using dark-themed HTML templates
-- **Forgot / Reset Password**: time-limited reset links sent via email; successful reset immediately revokes all active refresh tokens across all devices
-- **Role-Based Authorization**: `Admin` and `User` roles enforced at the controller level via `[Authorize(Roles = "...")]`; roles and the default admin account are seeded on every startup
-- **Admin Controls**: paginated user management with promote/demote, activate/deactivate, and hard delete; deactivation immediately revokes all tokens and blocks future logins
-- **Rate Limiting**: per-IP fixed-window limits on sensitive endpoints (`5/min` login, `3/5min` register, `3/15min` forgot-password) using .NET 8's built-in `RateLimiter`; all rejections return a consistent `429` body with a `Retry-After` header
-- **Security Headers**: `SecurityHeadersMiddleware` injects `HSTS`, `CSP`, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, and `Permissions-Policy` on every response; CSP is relaxed automatically for Swagger in development
-- **Structured Logging**: Serilog replaces the default logger with configurable sinks (Console, File, Seq); every request is logged with method, path, status code, duration, client IP, and user agent via `UseSerilogRequestLogging`; Swagger traffic is silenced at `Verbose` level
-- **Health Checks**: `GET /health` reports live status of PostgreSQL and SMTP; returns `200` when all dependencies are healthy, `503` when any fail; response includes per-check status and duration in JSON
-- **Docker Support**: multi-stage `Dockerfile` produces a minimal runtime image (~200MB); `docker-compose.yml` orchestrates API + PostgreSQL with health-check gating so the API never starts before the database is ready
-- **Strongly-Typed Configuration**: all environment variables are bound to validated settings classes (`JwtConfigs`, `SmtpConfigs`, `SeedConfigs`, `AppConfigs`) with `.ValidateOnStart()`; the app refuses to start if any required value is missing or invalid
-- **Consistent API Envelope**: every response, including `401`, `429`, and validation errors, returns the same `ApiResponse<T>` JSON structure; no endpoint ever returns a blank body
-- **Global Exception Handling**: `ExceptionHandlingMiddleware` maps all custom exception types to their correct HTTP status codes; stack traces are only exposed in `Development`
-- **Account Security**: 5 failed login attempts trigger a 15-minute lockout; password policy enforces minimum length, mixed case, digits, and special characters
-- **Proxy-Aware**: `ForwardedHeadersMiddleware` resolves real client IPs from `X-Forwarded-For` so rate limiting and logging work correctly behind Nginx or Cloudflare
-- **Swagger UI**: fully documented with Bearer token support at `/swagger`; only exposed in `Development`
+### Purpose
 
----
+Auth Service provides a centralized HTTP API for basic identity operations. It
+is intended as a starting point for applications that need user accounts,
+credential verification, role claims, signed bearer tokens, and revocable
+sessions represented by refresh tokens.
 
-## Project Structure
+### Problem it addresses
 
+Applications often need a common place to manage credentials and establish
+authenticated requests. This project brings account handling and token issuance
+into one ASP.NET Core service backed by Identity and SQL Server, rather than
+requiring each client to implement those operations itself.
+
+### Key capabilities
+
+- Register a user and assign the default `User` role.
+- Verify email/password credentials and issue a signed JWT and refresh token.
+- Rotate a refresh token and revoke the token it replaces.
+- Revoke a refresh token at logout.
+- Change the authenticated user's password.
+- Validate request DTOs with data annotations and a birth-date validator.
+- Apply configured IP-based in-memory rate limits.
+- Add security response headers, structured request logging, and exception
+  handling middleware.
+- Browse the API with Swagger UI in the Development environment.
+
+### Intended users and use cases
+
+- Developers evaluating or extending an ASP.NET Core identity API foundation.
+- Internal applications that need a small authentication service prototype.
+- Teams learning how Identity, EF Core, JWT bearer authentication, and refresh
+  token persistence fit together.
+
+The service is an API, not a web application: it has no frontend, user-facing
+screens, social sign-in, federation, or client SDK.
+
+## Screenshots
+
+There are no screenshot assets in the repository. The API's interactive
+documentation is Swagger UI at `/swagger` when the service is running in
+Development.
+
+> **Screenshot placeholder:** Add a reviewed Swagger UI image here when a
+> screenshot asset is available.
+
+## Architecture
+
+### High-level view
+
+```mermaid
+flowchart LR
+    Client["API client"]
+    subgraph API["AuthService.API — ASP.NET Core 8"]
+        Pipeline["HTTP pipeline<br/>forwarded headers · security headers<br/>rate limiting · exception handling · logging"]
+        Controller["AuthController"]
+        Identity["ASP.NET Core Identity"]
+        JwtContract["IJwtService"]
+        Pipeline --> Controller
+        Controller --> Identity
+        Controller --> JwtContract
+    end
+    subgraph Infra["AuthService.Infrastructure"]
+        DbContext["ApplicationDbContext<br/>EF Core SQL Server provider"]
+        JwtImpl["JwtService<br/>JWT and refresh-token creation"]
+    end
+    Core["AuthService.Core<br/>entities · DTOs · validation · interface"]
+    Sql["SQL Server"]
+
+    Client -->|"HTTP / JSON"| Pipeline
+    Controller --> DbContext
+    Identity --> DbContext
+    JwtContract -. "implemented by" .-> JwtImpl
+    JwtImpl --> Identity
+    DbContext --> Sql
+    API -. "uses" .-> Core
+    Infra -. "depends on" .-> Core
 ```
-AuthCore.API/
-├── Controllers/
-│   ├── AuthController.cs              # Register, Login, Logout, Confirm, ForgotPassword, ResetPassword
-│   ├── UserController.cs              # GetProfile, UpdateProfile, ChangePassword
-│   └── AdminController.cs             # GetAllUsers, GetUser, Promote, Demote, Activate, Deactivate, Delete
-│
-├── Configs/                           # Strongly-typed configuration classes
-│   ├── AppConfigs.cs                  # App__BaseUrl
-│   ├── JwtConfigs.cs                  # JWT__SecretKey, Issuer, Audience, expiry
-│   ├── SmtpConfigs.cs                 # Smtp__Host, Port, credentials, SSL
-│   └── SeedConfigs.cs                 # Seed__Admin__* values
-│
-├── Data/
-│   ├── ApplicationDbContext.cs
-│   ├── DbSeeder.cs                    # Admin seeder: runs on every startup (accepts SeedConfigs)
-│   └── Migrations/                    # EF Core migrations
-│
-├── DTOs/
-│   ├── Auth/
-│   │   ├── AuthResponseDto.cs
-│   │   ├── ConfirmEmailRequestDto.cs
-│   │   ├── ForgotPasswordRequestDto.cs
-│   │   ├── LoginRequestDto.cs
-│   │   ├── RefreshTokenRequestDto.cs
-│   │   ├── RegisterRequestDto.cs
-│   │   └── ResetPasswordRequestDto.cs
-│   └── User/
-│       ├── UserResponseDto.cs
-│       ├── ChangePasswordRequestDto.cs
-│       └── UpdateProfileRequestDto.cs
-│
-├── Exceptions/
-│   ├── ApiException.cs                # Abstract base
-│   └── CustomExceptions.cs            # 400, 401, 403, 404, 409 exception types
-│
-├── HealthChecks/
-│   └── SmtpHealthCheck.cs             # TCP probe — verifies SMTP host:port is reachable
-│
-├── Middleware/
-│   ├── ExceptionHandlingMiddleware.cs # Maps exceptions to consistent ApiResponse<T> errors
-│   └── SecurityHeadersMiddleware.cs   # Injects security headers on every response
-│
-├── Models/
-│   ├── ApiResponse.cs
-│   ├── PagedList.cs
-│   ├── PaginationMetadata.cs
-│   └── UserModel.cs
-│
-├── Repositories/
-│   ├── IAuthRepository.cs
-│   └── AuthRepository.cs
-│
-├── Services/
+
+### Components
+
+| Component | Responsibility |
+| --- | --- |
+| `AuthService.API` | HTTP routes, dependency injection, authentication configuration, Swagger, middleware, startup role seeding, and application configuration. |
+| `AuthService.Core` | Identity entities, request/response DTOs, validation, and the `IJwtService` abstraction. |
+| `AuthService.Infrastructure` | `ApplicationDbContext` EF Core mapping and the `JwtService` implementation. |
+| SQL Server | Stores Identity data, user contact/address records, and refresh-token records. |
+
+The API references Core and Infrastructure. Infrastructure references Core.
+Core has no project references. ASP.NET Core's built-in dependency injection
+registers the JWT implementation as a scoped service.
+
+### Request and token flows
+
+```mermaid
+sequenceDiagram
+    actor Client
+    participant API as AuthService.API
+    participant Identity as ASP.NET Core Identity
+    participant JWT as JwtService
+    participant DB as SQL Server / EF Core
+
+    Client->>API: POST /api/auth/register
+    API->>Identity: Create user with password
+    Identity->>DB: Persist user and password hash
+    API->>Identity: Assign User role
+    API-->>Client: 200 registration result
+
+    Client->>API: POST /api/auth/login
+    API->>Identity: Find user and check password
+    API->>JWT: Generate access and refresh tokens
+    JWT->>Identity: Read user roles for JWT claims
+    API->>DB: Persist refresh-token record
+    API-->>Client: 200 access token + refresh token
+
+    Client->>API: POST /api/auth/refresh-token
+    API->>JWT: Validate signature of supplied access token
+    API->>DB: Find active refresh token; revoke it and save replacement
+    API-->>Client: 200 replacement token pair
+```
+
+### Design and operational considerations
+
+- **Layered separation:** HTTP concerns, domain-facing types, and persistence /
+  token implementation are in separate projects.
+- **Dependency injection:** Controller dependencies and the JWT service are
+  supplied by ASP.NET Core DI.
+- **Middleware pipeline:** Forwarded headers, exception handling, response
+  security headers, Serilog request logging, rate limiting, authentication, and
+  authorization are registered in `Program.cs`.
+- **Stateless access tokens, stateful refresh tokens:** JWTs are validated
+  locally; refresh tokens are looked up and rotated in SQL Server.
+- **Scale-out limitation:** IP rate-limit counters use in-memory storage, so
+  they are per process and are not shared across replicas. Refresh-token state
+  is in SQL Server and can be shared if all instances use the same database and
+  token configuration.
+- **Security boundary:** Clients must use HTTPS outside isolated development.
+  Configure trusted proxy forwarding deliberately; do not trust arbitrary
+  forwarded headers from untrusted internet clients.
+
+## Technology stack
+
+| Area | Technology currently present |
+| --- | --- |
+| Backend / API | .NET 8, ASP.NET Core Web API |
+| Identity | ASP.NET Core Identity, Identity EF Core stores |
+| Authentication | JWT bearer authentication, `System.IdentityModel.Tokens.Jwt`, Microsoft IdentityModel token validation |
+| Data access | Entity Framework Core 8 |
+| Database provider | SQL Server; LocalDB is the checked-in development default |
+| API documentation | Swashbuckle / Swagger UI |
+| Rate limiting | AspNetCoreRateLimit with in-memory counters |
+| Logging | Serilog ASP.NET Core, console sink, rolling file sink |
+| Frontend | None |
+| Infrastructure as code | None found |
+| Containers / orchestration | No Dockerfile, Compose file, or Kubernetes manifests found |
+| CI/CD | No pipeline definitions found |
+| Tests | No test project or test framework configured in the solution |
+| Metrics / tracing | No metrics or distributed tracing provider configured |
+| External integrations | SQL Server is the configured data service; no email, OAuth provider, or webhook integration is implemented |
+
+Package versions are declared in the three project files. The projects target
+`net8.0`.
+
+## Repository structure
+
+```text
+.
+├── .gitignore
+├── README.md
+├── AuthService.slnx
+├── AuthService.API/
+│   ├── AuthService.API.csproj
+│   ├── Program.cs
+│   ├── AuthService.API.http
+│   ├── appsettings.json
+│   ├── appsettings.Development.json
+│   ├── Properties/
+│   │   └── launchSettings.json
+│   ├── Controllers/
+│   │   └── AuthController.cs
+│   ├── Exceptions/
+│   │   └── ApiExceptions.cs
+│   ├── Middleware/
+│   │   ├── ExceptionHandlingMiddleware.cs
+│   │   └── SecurityHeadersMiddleware.cs
+│   └── Models/
+│       └── ApiResponse.cs
+├── AuthService.Core/
+│   ├── AuthService.Core.csproj
+│   ├── DTOs/
+│   │   ├── AuthResponse.cs
+│   │   ├── ChangePasswordRequest.cs
+│   │   ├── ForgotPasswordRequest.cs
+│   │   ├── LoginRequest.cs
+│   │   ├── RefreshTokenRequest.cs
+│   │   ├── RegisterRequest.cs
+│   │   └── ResetPasswordRequest.cs
+│   ├── Entities/
+│   │   ├── ApplicationRole.cs
+│   │   ├── ApplicationUser.cs
+│   │   ├── RefreshToken.cs
+│   │   ├── UserAddress.cs
+│   │   └── UserPhone.cs
 │   ├── Interfaces/
-│   │   ├── IAdminService.cs
-│   │   ├── IAuthService.cs
-│   │   ├── IEmailService.cs
-│   │   └── IUserService.cs
-│   ├── AdminService.cs
-│   ├── AuthService.cs
-│   ├── EmailService.cs
-│   └── EmailTemplateService.cs
-│
-├── Templates/
-│   └── Email/
-│       ├── ConfirmEmail.html          # Sent on register
-│       ├── ResetPassword.html         # Sent on forgot-password
-│       └── WelcomeEmail.html          # Sent after email confirmed
-│
-├── .env                               # ⚠️ Secrets: gitignored
-├── .env.example                       # ✅ Template: safe to commit
-├── .env.docker                        # ⚠️ Docker secrets: gitignored
-├── .env.docker.example                # ✅ Docker template: safe to commit
-├── .dockerignore
-├── appsettings.json                   # Serilog configuration + app settings
-├── AuthCore.API.csproj
-├── docker-compose.yml
-├── Dockerfile
-└── Program.cs
+│   │   └── IJwtService.cs
+│   └── Validators/
+│       └── DateValidator.cs
+└── AuthService.Infrastructure/
+    ├── AuthService.Infrastructure.csproj
+    ├── Data/
+    │   └── ApplicationDbContext.cs
+    └── Services/
+        └── JwtService.cs
 ```
 
----
+### Important files
 
-## Getting Started
+- `AuthService.slnx` lists the API, Core, and Infrastructure projects.
+- `AuthService.API/Program.cs` configures services and middleware, applies EF
+  Core migrations at startup, and seeds the default roles.
+- `AuthService.API/Controllers/AuthController.cs` implements the five current
+  authentication routes.
+- `AuthService.API/appsettings.json` contains the default connection string,
+  JWT settings, rate-limit rules, and Serilog levels.
+- `AuthService.API/Properties/launchSettings.json` defines local HTTP/HTTPS
+  launch profiles and ports.
+- `AuthService.API/AuthService.API.http` is an editor HTTP request file. Its
+  current sample still refers to `/weatherforecast`, which is not an
+  implemented endpoint.
+- `AuthService.Infrastructure/Data/ApplicationDbContext.cs` maps Identity and
+  application entities to database tables.
+- `AuthService.Infrastructure/Services/JwtService.cs` creates JWTs and random
+  refresh-token values.
+- `.gitignore` excludes build output, local settings, logs, databases, and
+  directories named `Migrations`. Review the migration ignore rule before
+  generating migrations so schema source files are committed.
 
-### Option A — Local development
+The `bin/`, `obj/`, and runtime `logs/` directories may appear locally but are
+generated artifacts and are not part of the source layout.
 
-#### Prerequisites
-- [.NET 8 SDK](https://dotnet.microsoft.com/download)
-- [PostgreSQL 14+](https://www.postgresql.org/download/)
-- EF Core CLI: `dotnet tool install --global dotnet-ef`
+## Requirements
 
-#### 1. Clone & restore
-```bash
-git clone https://github.com/abdelrahman-kamel-elgendy/AuthCore.API.git
-cd AuthCore.API
-dotnet restore
+### Required
+
+- .NET 8 SDK.
+- SQL Server accessible to the API. The checked-in default uses SQL Server
+  LocalDB and is intended for Windows development.
+- Network access to restore NuGet packages on first build.
+
+### Recommended for development
+
+- Visual Studio, Visual Studio Code with C# tooling, or another .NET-capable
+  editor.
+- `dotnet-ef` 8.x for authoring EF Core migrations (not required merely to run
+  the API if migrations have already been added to the project).
+- A SQL client for examining the database.
+
+There is no frontend toolchain, JavaScript package manager, Python runtime,
+Docker, or Kubernetes requirement for the current source.
+
+## Installation and first run
+
+### 1. Restore and build
+
+Run from the repository root:
+
+```powershell
+dotnet --info
+dotnet restore .\AuthService.slnx
+dotnet build .\AuthService.slnx
 ```
 
-#### 2. Configure `.env`
-```bash
-cp .env.example .env
+### 2. Configure secrets and database access
+
+Set the connection string and a unique JWT signing secret. See
+[Configuration and environment variables](#configuration-and-environment-variables).
+Do not use the checked-in example signing key outside local-only development.
+
+### 3. Create and apply the database schema
+
+**This repository currently has no EF Core migration files.** `Program.cs` calls
+`MigrateAsync()` during startup, but that call cannot create the application's
+tables without migrations. The startup code catches and logs migration errors,
+then continues starting the web server; a successful HTTP startup therefore
+does not prove the database is ready.
+
+To author an initial migration after installing the EF CLI:
+
+```powershell
+dotnet tool install --global dotnet-ef --version 8.0.0
+dotnet ef migrations add InitialCreate `
+  --project .\AuthService.Infrastructure\AuthService.Infrastructure.csproj `
+  --startup-project .\AuthService.API\AuthService.API.csproj `
+  --output-dir Data\Migrations
 ```
 
-Fill in all values — database connection, JWT secret, SMTP credentials, and seed admin details.
+Then inspect and commit the generated migration and model snapshot. The
+repository's `.gitignore` currently ignores directories named `Migrations`;
+adjust that rule or force-add the reviewed migration files. Start the API with
+a valid database connection to apply migrations automatically, or use:
 
-> **Gmail SMTP**: use an [App Password](https://myaccount.google.com/apppasswords), not your regular Gmail password. Enable 2FA first, then generate an app password under *Security → 2-Step Verification → App passwords*.
-
-#### 3. Create the PostgreSQL database
-```bash
-psql -U postgres -c "CREATE DATABASE AuthCoreDB;"
+```powershell
+dotnet ef database update `
+  --project .\AuthService.Infrastructure\AuthService.Infrastructure.csproj `
+  --startup-project .\AuthService.API\AuthService.API.csproj
 ```
 
-#### 4. Apply migrations
-```bash
-dotnet ef database update
+For production, prefer reviewed migration scripts or a controlled deployment
+step instead of applying schema changes implicitly during application startup.
+
+### 4. Run the API
+
+```powershell
+dotnet run --project .\AuthService.API\AuthService.API.csproj --launch-profile http
 ```
 
-#### 5. Run
-```bash
-dotnet run
+The `http` profile listens on `http://localhost:5170`. The `https` profile
+listens on `https://localhost:7282` and `http://localhost:5170`. In Development,
+open [http://localhost:5170/swagger](http://localhost:5170/swagger).
+
+### 5. Verify startup
+
+```powershell
+Invoke-WebRequest http://localhost:5170/swagger/index.html
 ```
 
-Open **http://localhost:5000/swagger** 🎉
+Swagger returning HTTP 200 verifies the HTTP application is responding. Also
+check the console and `AuthService.API/logs/` for database migration errors;
+database-backed features require a valid schema and connection.
 
-> **First login**: use the admin credentials you set in `.env` under `Seed__Admin__*`.
+### Setup flow
 
----
-
-### Option B — Docker (recommended)
-
-#### Prerequisites
-- [Docker Desktop](https://www.docker.com/products/docker-desktop)
-
-#### 1. Clone
-```bash
-git clone https://github.com/abdelrahman-kamel-elgendy/AuthCore.API.git
-cd AuthCore.API
+```mermaid
+flowchart TD
+    SDK["Install .NET 8 SDK"] --> Restore["Restore NuGet packages"]
+    Restore --> Config["Set database connection and JWT secret"]
+    Config --> Migration["Create / review / apply EF migration"]
+    Migration --> Run["Run AuthService.API"]
+    Run --> Verify["Check Swagger and database logs"]
 ```
 
-#### 2. Configure `.env.docker`
-```bash
-cp .env.docker.example .env.docker
+## Configuration and environment variables
+
+ASP.NET Core loads `appsettings.json`, the environment-specific appsettings
+file, and environment variables. Use double underscores (`__`) to represent
+configuration nesting in environment-variable names. Environment variables
+override JSON values.
+
+| Setting / environment variable | Required | Default / example | Purpose and security notes |
+| --- | --- | --- | --- |
+| `ConnectionStrings__DefaultConnection` | Yes for database features | LocalDB connection in `appsettings.json` | SQL Server connection string. Treat credentials as secrets. Use a least-privilege database identity in hosted environments. |
+| `Jwt__SecretKey` | Yes | Checked-in development placeholder; replace it | HMAC signing key. Supply a unique cryptographically random secret of at least 32 bytes. Store it in a secret manager; never commit a production key. Changing it invalidates previously issued access tokens. |
+| `Jwt__Issuer` | Yes for a well-defined token issuer | `AuthService` | Expected JWT issuer. Keep issuance and validation settings consistent. |
+| `Jwt__Audience` | Yes for a well-defined token audience | `AuthServiceClient` | Expected JWT audience. Configure only the intended consumers. |
+| `Jwt__AccessTokenExpirationMinutes` | No | `15` | Access-token lifetime read by `JwtService`. The login response currently reports a hard-coded 15 minutes, so keep this setting at 15 unless that response behavior is corrected. |
+| `ASPNETCORE_ENVIRONMENT` | No | Launch profiles set `Development` | Controls environment-specific configuration and Swagger availability. Use `Production` in production; avoid exposing development exception details. |
+| `IpRateLimiting__...` | No | See rate-limit section in `appsettings.json` | AspNetCoreRateLimit settings; nested arrays can be overridden using indexed environment keys. Prefer managing complex rule sets in protected deployment configuration. |
+| `Serilog__MinimumLevel__Default` | No | `Information` | Default minimum log level. Avoid raising verbosity where sensitive request data could be exposed. |
+| `Serilog__MinimumLevel__Override__Microsoft` | No | `Warning` | Microsoft framework log level override. |
+| `Serilog__MinimumLevel__Override__System` | No | `Warning` | System log level override. |
+| `AllowedHosts` | No | `*` | ASP.NET Core host filtering. Restrict to expected hostnames in deployment. |
+
+For PowerShell local development:
+
+```powershell
+$env:ConnectionStrings__DefaultConnection = "Server=localhost;Database=AuthServiceDb;Trusted_Connection=True;TrustServerCertificate=True"
+$env:Jwt__SecretKey = "<replace-with-a-unique-random-secret-of-at-least-32-bytes>"
+$env:Jwt__Issuer = "AuthService"
+$env:Jwt__Audience = "AuthServiceClient"
+$env:ASPNETCORE_ENVIRONMENT = "Development"
+dotnet run --project .\AuthService.API\AuthService.API.csproj
 ```
 
-Fill in your values — the format matches `.env.example` but uses Docker-specific variable names.
+Environment variable values set this way apply only to the current PowerShell
+process and its child processes. Production secrets should come from the
+deployment platform's secret store, not from a checked-in file or command
+history.
 
-#### 3. Start the stack
-```bash
-docker-compose --env-file .env.docker up -d
+### Rate-limit configuration
+
+The current JSON config enables endpoint rate limiting, returns HTTP `429` when
+limited, and defines:
+
+| Rule | Limit |
+| --- | --- |
+| All endpoints | 60 requests per minute per client IP |
+| `POST:/api/auth/login` | 5 requests per minute per client IP |
+
+The counters use in-memory storage and reset when the process restarts. Limits
+are not coordinated across multiple replicas.
+
+### Feature flags and runtime settings
+
+No feature-flag system is present. The application configures JWT parameters,
+Identity password/user settings, rate limits, logging, forwarded headers, and
+development Swagger directly in `Program.cs` and JSON settings.
+
+## Local development
+
+### Workflow
+
+1. Create or select a SQL Server database and configure the connection string.
+2. Ensure a tracked EF migration exists and apply it.
+3. Set the Development environment and a local JWT secret.
+4. Run `dotnet watch --project .\AuthService.API\AuthService.API.csproj`.
+5. Use Swagger UI or an HTTP client to exercise `/api/auth` routes.
+6. Run `dotnet build .\AuthService.slnx` after changes.
+
+`dotnet watch` enables .NET hot reload where supported by the edited code. No
+custom watch configuration is included.
+
+### Debugging
+
+- Set `ASPNETCORE_ENVIRONMENT=Development` for the Development launch profile.
+- Use the debugger's ASP.NET Core launch configuration to attach to
+  `AuthService.API`.
+- Inspect console output and rolling files under `AuthService.API/logs/`.
+- Check the SQL Server connection and migration state separately from the HTTP
+  process; startup currently logs migration exceptions and continues.
+- Swagger is registered only in Development.
+
+### Configuration precedence
+
+Environment variables override appsettings values. User Secrets are not wired
+explicitly by the project, but can be enabled through standard ASP.NET Core
+development hosting if desired. Do not use committed JSON settings for
+credentials.
+
+## API reference
+
+Base route: `/api/auth`. JSON is used for request and response bodies. The
+controller has `[ApiController]`, so invalid annotated DTOs are rejected by
+ASP.NET Core model validation before the action executes.
+
+### Authentication and authorization
+
+- Public routes: registration, login, refresh, logout.
+- Protected route: change password, requiring
+  `Authorization: Bearer <access-token>`.
+- Access tokens are HMAC-SHA256 JWTs with subject, email, username, `userId`,
+  token ID, and Identity role claims.
+- Identity is configured to require unique email and, for passwords, uppercase,
+  lowercase, digit, and a minimum length of six characters. Registration and
+  password-change DTOs impose the stricter minimum of eight and additionally
+  require a character from `@$!%*?&`.
+- Email confirmation is disabled for sign-in.
+- `LoginRequest.RememberMe` is accepted but is not used by the current login
+  action.
+
+### Endpoints
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/api/auth/register` | Public | Create a user and assign the `User` role. |
+| `POST` | `/api/auth/login` | Public | Check credentials and issue access and refresh tokens. |
+| `POST` | `/api/auth/refresh-token` | Public | Validate the supplied token pair, revoke the old refresh token, and issue a replacement pair. |
+| `POST` | `/api/auth/logout` | Public | Revoke the refresh token supplied as a JSON string. |
+| `POST` | `/api/auth/change-password` | Bearer JWT | Change the authenticated user's password. |
+
+There are no implemented forgot-password or reset-password routes, despite
+request DTOs for those future flows.
+
+### Register
+
+```http
+POST /api/auth/register
+Content-Type: application/json
 ```
-
-This pulls PostgreSQL, builds the API image, runs migrations automatically, and seeds the admin account. The API will not start until PostgreSQL passes its health check.
-
-Open **http://localhost:8080/swagger** 🎉
-
-#### Useful Docker commands
-
-```bash
-# View live API logs
-docker compose logs -f api
-
-# Check container status and health
-docker compose ps
-
-# Rebuild after code changes
-docker compose --env-file .env.docker up -d --build
-
-# Stop everything (keeps database data)
-docker compose down
-
-# Stop and wipe the database volume
-docker compose down -v
-```
-
----
-
-## API Reference
-
-### Auth: `api/auth`
-
-| Method | Route | Auth | Rate Limit | Description |
-|---|---|---|---|---|
-| `POST` | `/register` | — | 3 / 5 min / IP | Register new account, sends confirmation email |
-| `GET` | `/confirm-email?userId=&token=` | — | — | Confirm email via link, sends welcome email |
-| `POST` | `/login` | — | 5 / 1 min / IP | Login, returns access + refresh token |
-| `POST` | `/refresh-token` | — | 60 / 1 min / IP | Rotate refresh token |
-| `POST` | `/logout` | Bearer | — | Revoke refresh token + blacklist access token |
-| `POST` | `/forgot-password` | — | 3 / 15 min / IP | Send password reset link (always returns 200) |
-| `POST` | `/reset-password` | — | — | Reset password, revokes all refresh tokens |
-
----
-
-#### `POST /api/auth/register`
-```json
-{
-  "firstName":       "John",
-  "lastName":        "Doe",
-  "username":        "johndoe",
-  "email":           "john@example.com",
-  "password":        "Secret@123",
-  "confirmPassword": "Secret@123"
-}
-```
-Optional: `phoneNumber`, `address`, `birthDate`, `profileURL`.
-
-```json
-{
-  "status":  201,
-  "success": true,
-  "message": "Registration successful. Please check your email for confirmation.",
-  "data": {
-    "token":    "eyJhbGci...",
-    "userId":   "abc-123",
-    "userName": "johndoe",
-    "email":    "john@example.com"
-  }
-}
-```
-
----
-
-#### `POST /api/auth/login`
-```json
-{
-  "email":    "john@example.com",
-  "password": "Secret@123"
-}
-```
-Optional: `rememberMe`.
-
-```json
-{
-  "status":  200,
-  "success": true,
-  "message": "Login successful.",
-  "data": {
-    "token":        "eyJhbGci...",
-    "refreshToken": "abc123...",
-    "expiration":   "2026-03-09T14:00:00Z",
-    "userId":       "abc-123",
-    "userName":     "johndoe",
-    "email":        "john@example.com",
-    "roles":        ["User"]
-  }
-}
-```
-
----
-
-#### `POST /api/auth/logout`
-Requires `Authorization: Bearer {token}`.
-- Revokes the refresh token server-side
-- Calling logout again with the same token returns `401`
-
----
-
-#### `POST /api/auth/forgot-password`
-```json
-{ "email": "john@example.com" }
-```
-Always returns `200` — never reveals whether the email exists.
-
----
-
-#### `POST /api/auth/reset-password`
-```json
-{
-  "userId":          "abc-123",
-  "token":           "reset_token_from_email",
-  "password":        "NewSecret@456",
-  "confirmPassword": "NewSecret@456"
-}
-```
-
----
-
-### User: `api/user` *(Bearer required)*
-
-| Method | Route | Description |
-|---|---|---|
-| `GET` | `/me` | Get own profile |
-| `PUT` | `/me` | Update profile fields |
-| `PUT` | `/me/change-password` | Change password, forces re-login |
-
-#### `PUT /api/user/me`
-All fields optional — only provided fields are updated:
-```json
-{
-  "firstName":   "Jane",
-  "lastName":    "Doe",
-  "phoneNumber": "+1234567890",
-  "address":     "123 Main St",
-  "profileURL":  "https://example.com/avatar.png",
-  "birthDate":   "1995-06-15"
-}
-```
-
-#### `PUT /api/user/me/change-password`
-```json
-{
-  "currentPassword": "Secret@123",
-  "newPassword":     "NewSecret@456",
-  "confirmPassword": "NewSecret@456"
-}
-```
-
----
-
-### Admin: `api/admin` *(Admin role required)*
-
-| Method | Route | Description |
-|---|---|---|
-| `GET` | `/users?pageNumber=1&pageSize=10` | Paginated user list (max 50/page) |
-| `GET` | `/users/{userId}` | Get user by ID |
-| `POST` | `/users/{userId}/promote` | Add Admin role |
-| `POST` | `/users/{userId}/demote` | Remove Admin role |
-| `POST` | `/users/{userId}/activate` | Re-enable account |
-| `POST` | `/users/{userId}/deactivate` | Block login + revoke tokens |
-| `DELETE` | `/users/{userId}` | Permanently delete user |
-
-Pagination metadata is returned in the `X-Pagination` response header:
-```json
-{
-  "currentPage": 1,
-  "totalPages":  3,
-  "pageSize":    10,
-  "totalCount":  21,
-  "hasPrevious": false,
-  "hasNext":     true
-}
-```
-
----
-
-## Response Format
-
-Every endpoint returns the same envelope:
 
 ```json
 {
-  "status":  200,
-  "success": true,
-  "message": "...",
-  "data":    { },
-  "errors":  ["..."],
-  "validationErrors": {
-    "fieldName": ["error message"]
-  }
+  "firstName": "Ada",
+  "lastName": "Lovelace",
+  "username": "ada",
+  "email": "ada@example.com",
+  "password": "StrongPass1!",
+  "confirmPassword": "StrongPass1!"
 }
 ```
 
-`errors` and `validationErrors` are omitted when empty. All `401` and `429` responses also return this format — never a blank body.
-
----
-
-## Health Checks
-
-`GET /health` — no authentication required.
-
-Returns `200 OK` when all dependencies are healthy, `503 Service Unavailable` when any check fails.
+`middleName` and `profileURL` are present on the request DTO but are not currently
+copied to the user entity by the registration action. Birth dates in the future
+are rejected. A successful action returns HTTP 200:
 
 ```json
 {
-  "status": "Healthy",
-  "totalDuration": "00:00:00.0500",
-  "entries": {
-    "npgsql": {
-      "status":   "Healthy",
-      "duration": "00:00:00.0120"
-    },
-    "smtp": {
-      "status":      "Healthy",
-      "description": "SMTP reachable at smtp.gmail.com:587.",
-      "duration":    "00:00:00.0380"
-    }
-  }
+  "message": "User registered successfully",
+  "userId": "00000000-0000-0000-0000-000000000000"
 }
 ```
 
-| Check | What It Verifies |
-|---|---|
-| `npgsql` | Opens a real connection to PostgreSQL and runs a ping query |
-| `smtp` | Opens a TCP connection to the configured SMTP host and port |
+### Login
 
----
+```http
+POST /api/auth/login
+Content-Type: application/json
+```
 
-## Rate Limiting
-
-| Endpoint | Limit | Window |
-|---|---|---|
-| `POST /login` | 5 requests | per IP / per minute |
-| `POST /register` | 3 requests | per IP / per 5 min |
-| `POST /forgot-password` | 3 requests | per IP / per 15 min |
-| All other endpoints | 60 requests | per IP / per minute |
-
-The rate limiter reads `X-Forwarded-For` first so it correctly identifies real client IPs when running behind a reverse proxy (Nginx, Cloudflare, etc.).
-
----
-
-## Security Headers
-
-| Header | Value | Protects Against |
-|---|---|---|
-| `X-Content-Type-Options` | `nosniff` | MIME-type confusion attacks |
-| `X-Frame-Options` | `DENY` | Clickjacking via iframes |
-| `X-XSS-Protection` | `1; mode=block` | XSS in legacy browsers |
-| `Referrer-Policy` | `strict-origin-when-cross-origin` | Referrer info leakage |
-| `Permissions-Policy` | `camera=(), microphone=(), geolocation=(), payment=()` | Unwanted browser feature access |
-| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | SSL stripping, HTTPS downgrade attacks |
-| `Content-Security-Policy` | `default-src 'none'; frame-ancestors 'none'` | XSS, data injection, framing |
-
-> `Strict-Transport-Security` is only sent over HTTPS and is intentionally omitted on plain HTTP to avoid breaking local development.
->
-> The `Content-Security-Policy` is relaxed automatically for `/swagger` routes in development to allow Swagger UI assets to load correctly.
-
----
-
-## Structured Logging
-
-Serilog replaces the default .NET logger. Configuration lives in `appsettings.json` under the `Serilog` section — no code changes needed to adjust log levels or add sinks.
-
-Every HTTP request is logged with method, path, status code, duration, client IP, and user agent. Swagger traffic (`/swagger/*`) is logged at `Verbose` level and suppressed by default to keep logs clean.
-
----
-
-## Strongly-Typed Configs
-
-All environment variables are bound to typed classes in `Configs/` and validated at startup using Data Annotations + `.ValidateOnStart()`. The app **will not start** if any required variable is missing or invalid.
-
-| Class | Env Prefix | Key Variables |
-|---|---|---|
-| `JwtConfigs` | `JWT__` | `SecretKey`, `ValidIssuer`, `ValidAudience`, expiry |
-| `SmtpConfigs` | `Smtp__` | `Host`, `Port`, `Username`, `Password`, `EnableSsl` |
-| `SeedConfigs` | `Seed__Admin__` | Admin account credentials |
-| `AppConfigs` | `App__` | `BaseUrl` |
-
-To inject Configs into a service:
-```csharp
-public class EmailService(IOptions<SmtpConfigs> smtpOptions)
+```json
 {
-    private readonly SmtpConfigs _smtp = smtpOptions.Value;
+  "email": "ada@example.com",
+  "password": "StrongPass1!"
 }
 ```
 
----
+Success returns HTTP 200 with this shape:
 
-## Email Templates
+```json
+{
+  "userId": "00000000-0000-0000-0000-000000000000",
+  "userName": "ada",
+  "email": "ada@example.com",
+  "roles": ["User"],
+  "accessToken": "<signed-jwt>",
+  "refreshToken": "<opaque-random-token>",
+  "expiresAt": "2026-10-20T11:15:00Z"
+}
+```
 
-All templates live in `Templates/Email/` and use `{{Placeholder}}` syntax.
+The expiry timestamp is generated as UTC now plus 15 minutes in the controller,
+independent of `Jwt:AccessTokenExpirationMinutes`.
 
-| Template | Trigger | Placeholders |
-|---|---|---|
-| `ConfirmEmail.html` | On register | `{{FirstName}}`, `{{ConfirmUrl}}`, `{{Year}}` |
-| `WelcomeEmail.html` | After email confirmed | `{{FirstName}}`, `{{UserName}}`, `{{Email}}`, `{{Role}}`, `{{LoginUrl}}`, `{{Year}}` |
-| `ResetPassword.html` | On forgot-password | `{{FirstName}}`, `{{ResetUrl}}`, `{{Year}}` |
+### Refresh
 
----
+Send both the expired access token and current refresh token:
+
+```http
+POST /api/auth/refresh-token
+Content-Type: application/json
+```
+
+```json
+{
+  "accessToken": "<expired-access-token>",
+  "refreshToken": "<current-refresh-token>"
+}
+```
+
+Success returns:
+
+```json
+{
+  "accessToken": "<replacement-signed-jwt>",
+  "refreshToken": "<replacement-opaque-token>"
+}
+```
+
+The previous refresh-token record is marked revoked. The implementation
+validates the supplied access-token signature while allowing an expired token
+for this flow. In this refresh-specific validation path, issuer and audience
+validation are also disabled, and the code does not require the access token to
+actually be expired. Do not treat refresh validation as equivalent to normal
+bearer authentication; see [Security](#security).
+
+### Logout
+
+The action binds the request body directly to a string, so send a JSON string
+(not an object):
+
+```http
+POST /api/auth/logout
+Content-Type: application/json
+```
+
+```json
+"<refresh-token>"
+```
+
+The action revokes a matching active token and returns
+`{"message":"Logged out successfully"}`. Logout currently does not require an
+access token.
+
+### Change password
+
+```http
+POST /api/auth/change-password
+Authorization: Bearer <access-token>
+Content-Type: application/json
+```
+
+```json
+{
+  "currentPassword": "StrongPass1!",
+  "password": "NewStrongPass2!",
+  "confirmPassword": "NewStrongPass2!"
+}
+```
+
+### Error responses and status codes
+
+The API currently has a mix of response shapes: Identity errors are returned
+as arrays, action errors as objects, model-state errors use ASP.NET Core's
+automatic API-controller response, and the exception middleware returns the
+`ApiResponse<T>` envelope. Clients should use HTTP status codes as the primary
+signal and tolerate these different bodies.
+
+| Status | Meaning in current routes |
+| --- | --- |
+| `200` | Operation succeeded. |
+| `400` | Invalid DTO or rejected Identity operation, such as weak password. |
+| `401` | Invalid credentials, invalid/expired token, blocked account, or missing authorization. |
+| `404` | Authenticated user was not found during password change. |
+| `429` | Configured rate limit exceeded. |
+| `500` | Unexpected controller failure; the database may also be unavailable. |
+
+No webhooks are implemented.
+
+## Database
+
+### Provider and schema
+
+The configured provider is SQL Server. `ApplicationDbContext` inherits from
+`IdentityDbContext<ApplicationUser, ApplicationRole, Guid>`, uses GUID identity
+keys, and maps Identity tables to these explicit names:
+
+| Table | Entity / purpose |
+| --- | --- |
+| `Users` | `ApplicationUser` plus ASP.NET Core Identity user fields. |
+| `Roles` | `ApplicationRole` plus Identity role fields. |
+| `UserRoles` | User-to-role assignments. |
+| `UserClaims` | Identity user claims. |
+| `UserLogins` | External login records; no external login flow is implemented. |
+| `RoleClaims` | Role claims. |
+| `UserTokens` | Identity user tokens. |
+| `UserPhones` | User phone contact records. |
+| `UserAddresses` | User address records. |
+| `RefreshTokens` | Refresh-token value, expiry, issue/revocation metadata, and owner. |
+
+### Relationships and indexes
+
+- A user has many phone records, addresses, and refresh-token records.
+- Each phone, address, and refresh token belongs to one user.
+- These relationships use cascading delete behavior.
+- Identity configures its standard primary and identity indexes, including
+  normalized user and role lookup indexes.
+- The application context defines primary keys and selected string lengths for
+  application-owned tables. It does not declare additional application query
+  indexes.
+- `RefreshTokens.Token` is currently stored as a raw string. Treat database
+  access as sensitive and consider storing a one-way token hash before
+  production use.
+
+### Migrations and initialization
+
+No migration is currently checked in. Startup invokes `MigrateAsync()` and then
+seeds the `Admin`, `User`, and `Manager` roles. If migration/role setup fails,
+the exception is logged and swallowed, and the server continues to run. This
+can leave an apparently available API with an unusable database. Monitor startup
+logs and add a readiness check before deploying.
+
+See [Create and apply the database schema](#3-create-and-apply-the-database-schema)
+for initial migration commands. The `.gitignore` migration rule must be
+reviewed so migration source is not accidentally omitted from source control.
+
+### Backup and recovery
+
+No backup automation, retention schedule, or recovery scripts are included.
+For a production SQL Server deployment:
+
+1. Configure SQL Server full/differential/log backups according to the service's
+   recovery point and recovery time objectives.
+2. Encrypt and access-control backup storage independently from the application.
+3. Document retention and deletion requirements for personal data.
+4. Regularly restore backups into an isolated environment and verify the
+   restored schema and application data.
+5. Test migration rollback/forward procedures before production schema changes.
 
 ## Security
 
-| Concern | Approach |
-|---|---|
-| Secrets | `.env` via DotNetEnv, gitignored; validated at startup |
-| Passwords | PBKDF2 + salt (ASP.NET Identity) |
-| Access token | JWT HS256 · 1 hr · `ClockSkew = 0` |
-| Refresh token | 64 random bytes · 7 days · rotated on every use |
-| Rate limiting | Per-IP fixed-window on auth endpoints; `429` + `Retry-After` |
-| Security headers | `HSTS`, `CSP`, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy` on every response |
-| HTTPS | Enforced in non-development environments |
-| Proxy support | `X-Forwarded-For` / `X-Forwarded-Proto` via `ForwardedHeaders` middleware |
-| User enumeration | Login and forgot-password always return the same message |
-| Email confirmation | Required before login is allowed |
-| Account lockout | 5 failed attempts → 15-minute lockout |
-| Password policy | Min 8 chars, uppercase, lowercase, digit, special character |
-| Password change | Revokes all refresh tokens → forces re-login |
-| Password reset | Decodes URL-encoded token · revokes all refresh tokens |
-| Account deactivation | Revokes tokens immediately, blocks all future logins |
-| Stack trace | Only exposed in `Development` environment |
+### Implemented controls
 
----
+- ASP.NET Core Identity password hashing and user management.
+- JWT validation of issuer, audience, lifetime, signing key, and bearer scheme
+  for authenticated routes.
+- HMAC-SHA256 JWT signing and cryptographically random 32-byte refresh-token
+  values.
+- Refresh-token expiry and revocation checks during refresh/logout.
+- Configurable request rate limiting.
+- Security response headers including `X-Content-Type-Options`,
+  `X-Frame-Options`, `Referrer-Policy`, and `Permissions-Policy`.
+- HSTS on non-Development HTTPS requests.
+- Generic login failure responses reduce direct account enumeration through
+  different messages for unknown users versus wrong passwords.
 
-## Stack
+### Production security checklist
 
-| | |
-|---|---|
-| Framework | ASP.NET Core 8 |
-| ORM | Entity Framework Core 8 |
-| Database | PostgreSQL via Npgsql |
-| Identity | ASP.NET Core Identity |
-| Logging | Serilog |
-| Containerization | Docker + Docker Compose |
-| Secrets | DotNetEnv 3.1 |
-| Docs | Swashbuckle / Swagger 6.5 |
+- Replace the committed example JWT secret with a unique random secret from a
+  secret manager. Rotate it using a planned token invalidation process.
+- Enforce HTTPS at the edge and application. Configure trusted forwarded
+  headers only for known reverse proxies.
+- Use least-privilege SQL credentials, encrypted transport, restricted network
+  access, backups, and audited access.
+- Hash refresh tokens at rest; add unique constraints/indexes and concurrency
+  handling for rotation.
+- Make refresh-token rotation transactional and test concurrent reuse / replay
+  behavior.
+- Add account lockout or equivalent abuse protections. The current login calls
+  `CheckPasswordSignInAsync` with lockout-on-failure disabled.
+- Ensure role assignment succeeds during registration. The current code does
+  not check the result of `AddToRoleAsync`.
+- Do not expose development error details, Swagger, or sensitive logs publicly.
+- Review personal data in logs: authentication actions currently log email
+  addresses.
+- Configure an appropriate CSP for every deployed surface and test it with the
+  actual Swagger/static content served in Development.
+- Add readiness/health checks that verify required dependencies before routing
+  traffic.
+- Add security tests, dependency vulnerability scanning, and a documented
+  response process.
+
+This repository has no formal encryption-at-rest configuration; database,
+backup, and disk encryption must be configured in the chosen SQL Server hosting
+environment. Passwords are managed by Identity rather than stored in plaintext.
+
+The regular bearer authentication path validates issuer, audience, lifetime,
+and signing key. The refresh-token helper intentionally disables lifetime
+validation so an expired access token can be used, and also sets issuer and
+audience validation to false. The refresh endpoint does not check that the
+access token is expired. Treat this as a hardening item: require the intended
+issuer/audience in refresh validation, enforce the expected algorithm, and
+explicitly define whether the refresh flow accepts only expired access tokens.
+The refresh helper does check for the HMAC-SHA256 algorithm after validating
+the token. The application checks that a signing key exists, but does not
+enforce a minimum key length; enforce a secure key policy in deployment and
+validation.
+
+The `ReplacedByTokenId` assignment currently stores the prior token's ID on the
+new token record, despite the property's name suggesting a forward reference.
+Review and correct that relationship before relying on it for audit or replay
+detection.
+
+### Vulnerability reporting
+
+Do not publish exploit details or secrets in public issues. If GitHub private
+vulnerability reporting is enabled for the repository, use that channel.
+Otherwise contact the repository maintainers privately before public
+disclosure. No dedicated security contact is defined in this repository.
+
+## Testing and quality
+
+There is currently no test project in `AuthService.slnx` and no unit,
+integration, or end-to-end test framework/configuration in the repository.
+There is no coverage threshold or CI validation gate.
+
+Available baseline validation:
+
+```powershell
+dotnet restore .\AuthService.slnx
+dotnet build .\AuthService.slnx --no-restore
+```
+
+These commands compile the projects; they do not verify database connectivity,
+migrations, token security, rate limits, or endpoint behavior. Before a
+production release, add:
+
+- Unit tests for DTO validation, token creation/validation, and refresh-token
+  state transitions.
+- Integration tests using a disposable SQL Server-compatible database and the
+  actual ASP.NET Core pipeline.
+- API contract tests for request/response shapes, authorization, and error
+  statuses.
+- Security tests for invalid signatures, issuer/audience, expiry, refresh-token
+  replay, blocked users, and rate limiting.
+- Coverage reporting with an explicit team-defined threshold.
+
+## CI/CD and releases
+
+No GitHub Actions, Azure Pipelines, other CI workflow, release automation, or
+versioning policy is present.
+
+### Recommended pipeline stages
+
+1. Restore packages and compile the solution.
+2. Run unit and integration tests against an ephemeral database.
+3. Scan dependencies and publish test/coverage artifacts.
+4. Build a versioned, immutable deployment artifact.
+5. Apply reviewed database migration scripts in a controlled stage.
+6. Deploy to staging, run smoke tests, then require approval for production.
+7. Monitor health and errors; roll back the application artifact if needed.
+
+No release tags or semantic-versioning convention are currently defined. Establish
+a versioning policy before publishing packages or client integrations. For
+database rollback, prefer a tested forward-fix unless a migration is explicitly
+reversible and data-safe.
+
+## Deployment and operations
+
+### Current deployment support
+
+The repository contains a standard ASP.NET Core project and local launch
+profiles. It contains no Dockerfile, Compose file, Kubernetes manifests,
+Terraform/Bicep templates, cloud-specific deployment configuration, or staging
+environment definition.
+
+### Local
+
+Use SQL Server LocalDB on Windows or a separately managed SQL Server instance.
+Configure settings, ensure migrations exist and are applied, then:
+
+```powershell
+dotnet run --project .\AuthService.API\AuthService.API.csproj --launch-profile https
+```
+
+Development Swagger is served at `https://localhost:7282/swagger` with the
+checked-in launch profile.
+
+### Staging and production
+
+The following is deployment guidance, not a preconfigured deployment:
+
+- Host the published ASP.NET Core application on a supported .NET hosting
+  platform behind a TLS-terminating ingress/reverse proxy.
+- Use a managed SQL Server instance with backups, encryption, and restricted
+  network access.
+- Set `ASPNETCORE_ENVIRONMENT=Production`, restrict `AllowedHosts`, and supply
+  secrets via the platform's secret manager.
+- Keep Swagger unavailable publicly unless protected and intentionally enabled.
+- Run database migration scripts as a controlled release step.
+- Configure trusted proxy addresses and verify forwarded scheme/IP behavior.
+- Add health probes, centralized logs, alerts, and rollback procedures before
+  sending production traffic.
+
+For a cloud deployment such as Azure App Service plus Azure SQL, configure the
+hosting plan, database, networking, identity, TLS, logging, secrets, migration
+stage, and scaling independently. This repository does not include Azure
+resources or a validated cloud deployment guide.
+
+### Docker and Kubernetes
+
+No Docker or Kubernetes assets are provided; there is no supported one-command
+container or cluster deployment. A production containerization effort should
+use a non-root runtime image, externalized secrets, a read-only filesystem where
+practical, explicit health probes, resource limits, and graceful shutdown.
+Kubernetes deployment additionally needs a deployment/service/ingress,
+secret/config management, autoscaling policy, and SQL connectivity. These are
+recommendations, not existing project files.
+
+### Rollback
+
+No automated rollback mechanism exists. Keep the previous application artifact
+available, deploy immutable versions, monitor the rollout, and define a
+database-compatible rollback or forward-fix for every schema change. Do not
+assume an application rollback can reverse a destructive schema migration.
+
+## Monitoring and observability
+
+### Available
+
+- Serilog reads minimum levels from configuration.
+- Logs are written to console and to daily rolling files under
+  `AuthService.API/logs/auth-service-*.txt`.
+- ASP.NET request logging is enabled through `UseSerilogRequestLogging()`.
+- Controller actions log registration/login attempts and caught failures.
+
+### Not configured
+
+- No metrics exporter, distributed tracing, health-check endpoint, alert rules,
+  dashboard, centralized log sink, or readiness/liveness probe is included.
+
+For production, centralize logs, restrict access and retention, redact personal
+data, and alert on sustained 5xx responses, database connectivity/migration
+failures, elevated 401/429 rates, and latency. Add `/health/live` and
+`/health/ready` endpoints with distinct liveness and dependency-readiness
+semantics before configuring orchestrator probes.
+
+## Performance and scaling
+
+- EF Core and SQL Server provide the persistence path; there is no application
+  cache other than the in-memory rate-limit storage.
+- Login and refresh require database/Identity reads; refresh additionally
+  persists token rotation.
+- JWT validation is local to each API instance; refresh-token checks require the
+  shared database.
+- The in-memory rate limiter does not provide consistent limits across
+  instances. Replace it with a distributed store or gateway-level limits when
+  scaling out.
+- The application defines no custom query indexes for contact/address or
+  refresh-token lookups. Profile real query plans and add indexes based on
+  measured traffic and migration review.
+- No benchmark or load-test results are included. Do not infer capacity from a
+  successful local build or smoke check.
+
+## Maintenance
+
+Regular maintainers should:
+
+- Keep .NET and NuGet dependencies on supported, patched versions and review
+  compatibility before upgrades.
+- Run restore, build, tests, and dependency/security scans for dependency
+  changes.
+- Review database migrations and confirm they are included in source control.
+- Rotate credentials and signing secrets under a documented procedure.
+- Inspect log volume, retention, access, and personal-data exposure.
+- Test database backups and restore procedures periodically.
+- Review rate-limit effectiveness, authentication abuse signals, and role
+  assignment behavior.
+- Update this README and API examples whenever endpoints or configuration
+  change.
+
+For a .NET major-version upgrade, update target frameworks, packages, hosting
+runtime, CI (once present), and deployment images together; run migration and
+authentication regression tests before release.
+
+## Contributing
+
+No `CONTRIBUTING.md`, code-style configuration, or branch policy is present.
+Until maintainers define one, contributors should:
+
+1. Open an issue or discussion for a substantial behavior or schema change.
+2. Create a focused branch from the default branch.
+3. Keep changes scoped and preserve the Core → Infrastructure → API dependency
+   direction.
+4. Add or update tests when test infrastructure is introduced.
+5. Run `dotnet build .\AuthService.slnx` and document any unverified behavior.
+6. Include reviewed migration files for schema changes and keep secrets out of
+   commits.
+7. Open a pull request with context, validation results, security impact, and
+   migration/deployment notes.
+
+Use descriptive commits and avoid unrelated formatting or generated build
+artifacts. A formal license and contribution policy require maintainer approval.
+
+## FAQ and troubleshooting
+
+### The API starts, but registration/login returns errors or the logs show `Invalid object name 'Roles'`.
+
+The schema likely does not exist. This repository has no checked-in EF Core
+migrations. Add and apply a reviewed initial migration and verify the configured
+SQL Server connection. Startup currently logs migration errors and continues,
+so a listening HTTP port alone is not a database health check.
+
+### `dotnet ef` cannot find a migration or DbContext.
+
+Ensure `dotnet-ef` 8.x is installed, use `AuthService.Infrastructure` as the
+project containing the context, and specify `AuthService.API` as the startup
+project. See the migration commands above.
+
+### The API fails during startup because the JWT key is missing.
+
+Set `Jwt__SecretKey`. The application throws an explicit configuration error
+when the key is absent. Use a secure unique value of at least 32 bytes.
+
+### Swagger is unavailable.
+
+Swagger is registered only when the environment is Development. Set
+`ASPNETCORE_ENVIRONMENT=Development` locally and use the configured launch
+profile/port.
+
+### A request returns 401.
+
+For protected routes, send a valid unexpired JWT as
+`Authorization: Bearer <token>`. Confirm client and API use the same signing
+secret, issuer, and audience. A blocked account cannot log in or refresh.
+
+### A request returns 429.
+
+Check the per-IP rules in `IpRateLimiting` and wait for the configured one-minute
+window. Counters are in memory and shared only within one process.
+
+### LocalDB is unavailable on this operating system.
+
+LocalDB is Windows-oriented. Configure `ConnectionStrings__DefaultConnection`
+to a reachable SQL Server instance suitable for your environment.
+
+### The sample `.http` request returns 404.
+
+`AuthService.API.http` still contains a template `/weatherforecast` request.
+That route is not implemented. Use the `/api/auth` routes documented above.
+
+## Roadmap and current limitations
+
+The following items are not implemented or configured today; they are candidates
+for future work, not delivery commitments:
+
+- Add and track the initial EF migration; make startup readiness accurately
+  reflect database availability.
+- Add unit, integration, and security test projects plus CI enforcement.
+- Improve refresh-token handling with hashing at rest, unique indexes,
+  transactional rotation, and replay/concurrency tests.
+- Add account lockout, email verification, forgot/reset password workflows,
+  and safe role-assignment failure handling.
+- Align reported token expiry with configured token lifetime and standardize
+  error response contracts.
+- Add health checks, metrics, distributed tracing, centralized log export, and
+  operational alerts.
+- Add container and cloud deployment assets if those deployment targets are
+  adopted.
+- Define release/versioning policy, support channels, contribution policy, and
+  project license.
+
+## License
+
+No `LICENSE` file or license declaration was found. Until the repository owner
+adds one, no open-source usage, modification, or redistribution license should
+be assumed. Contact the owner for permission before reusing or distributing
+this project.
+
+## Support and vulnerability reports
+
+No support address, community forum, or dedicated security contact is defined
+in the repository. For project questions or reproducible bugs, use the
+repository's issue tracker if available and include reproduction steps, runtime
+version, and sanitized logs. Never include passwords, bearer tokens, refresh
+tokens, connection strings, or signing keys.
+
+For security-sensitive reports, do not file public exploit details. Use GitHub
+private vulnerability reporting if enabled; otherwise contact the maintainers
+privately and coordinate disclosure.
+
+## Appendix: useful commands and glossary
+
+### Useful commands
+
+```powershell
+# Show SDK information
+dotnet --info
+
+# Restore and build
+dotnet restore .\AuthService.slnx
+dotnet build .\AuthService.slnx --no-restore
+
+# Run with hot reload
+dotnet watch --project .\AuthService.API\AuthService.API.csproj
+
+# Run using the HTTP or HTTPS launch profile
+dotnet run --project .\AuthService.API\AuthService.API.csproj --launch-profile http
+dotnet run --project .\AuthService.API\AuthService.API.csproj --launch-profile https
+
+# Check the local Swagger endpoint (HTTP profile)
+Invoke-WebRequest http://localhost:5170/swagger/index.html
+```
+
+No `dotnet test` command can currently run project tests because the solution
+contains no test project.
+
+### Glossary
+
+| Term | Meaning |
+| --- | --- |
+| Access token | Short-lived signed JWT sent to protected endpoints. |
+| EF Core | Entity Framework Core, the ORM used to map entities to SQL Server. |
+| Identity | ASP.NET Core's user, password, role, and claim management framework. |
+| Migration | Versioned EF Core schema change used to create/update the database. |
+| Refresh token | Random, longer-lived token stored server-side and rotated to obtain a new access token. |
+| Role claim | A role value embedded in a JWT and usable by authorization policies. |
+| SQL Server LocalDB | Lightweight SQL Server development instance, commonly used on Windows. |
+
+### References
+
+- [.NET documentation](https://learn.microsoft.com/dotnet/)
+- [ASP.NET Core documentation](https://learn.microsoft.com/aspnet/core/)
+- [ASP.NET Core Identity](https://learn.microsoft.com/aspnet/core/security/authentication/identity)
+- [EF Core migrations](https://learn.microsoft.com/ef/core/managing-schemas/migrations/)
+- [ASP.NET Core JWT bearer authentication](https://learn.microsoft.com/aspnet/core/security/authentication/)
+- [OWASP Cheat Sheet Series](https://cheatsheetseries.owasp.org/)
