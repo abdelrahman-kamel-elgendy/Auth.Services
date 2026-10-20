@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json.Serialization;
 
 namespace AuthService.Core.Entities
 {
@@ -23,6 +24,7 @@ namespace AuthService.Core.Entities
 
         [ForeignKey("User")]
         public Guid UserId { get; set; }
-        public virtual ApplicationUser User { get; set; }
+        [JsonIgnore]
+        public virtual ApplicationUser User { get; set; } = null!;
     }
 }

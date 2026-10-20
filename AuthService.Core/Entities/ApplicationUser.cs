@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+using Microsoft.AspNetCore.Identity;
 
 namespace AuthService.Core.Entities;
 
@@ -20,7 +20,7 @@ public class ApplicationUser : IdentityUser<Guid>
 
 
     // Navigation properties
-    public virtual ICollection<UserPhone> UserPhones { get; set; }
-    public virtual ICollection<UserAddress> UserAddresses { get; set; }
-    public virtual ICollection<RefreshToken> RefreshTokens { get; set; }
+    public virtual ICollection<UserPhone> UserPhones { get; set; } = new List<UserPhone>();
+    public virtual ICollection<UserAddress> UserAddresses { get; set; } = new List<UserAddress>();
+    public virtual ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
 }

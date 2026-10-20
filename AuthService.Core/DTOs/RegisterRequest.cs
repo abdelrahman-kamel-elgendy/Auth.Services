@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using AuthService.Core.Validators;
 
 namespace AuthService.Core.DTOs;
 

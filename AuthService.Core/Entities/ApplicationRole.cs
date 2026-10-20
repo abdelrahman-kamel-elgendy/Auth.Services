@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Identity;
+
 namespace AuthService.Core.Entities;
 
 public class ApplicationRole : IdentityRole<Guid>
